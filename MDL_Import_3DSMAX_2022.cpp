@@ -101,19 +101,19 @@ int ImportMDL_MAX::ExtCount()
 const TCHAR* ImportMDL_MAX::Ext(int /*n*/)
 {
 #pragma message(TODO("Return the 'i-th' file name extension (i.e. \"3DS\")."))
-	return _T("");
+	return _T("MDL");
 }
 
 const TCHAR* ImportMDL_MAX::LongDesc()
 {
 #pragma message(TODO("Return long ASCII description (i.e. \"Targa 2.0 Image File\")"))
-	return _T("");
+	return _T("WWE 2K22 3D Package");
 }
 
 const TCHAR* ImportMDL_MAX::ShortDesc()
 {
 #pragma message(TODO("Return short ASCII description (i.e. \"Targa\")"))
-	return _T("");
+	return _T("WWE2K Model");
 }
 
 const TCHAR* ImportMDL_MAX::AuthorName()
@@ -151,12 +151,28 @@ void ImportMDL_MAX::ShowAbout(HWND /*hWnd*/)
 	// Optional
 }
 
-int ImportMDL_MAX::DoImport(const TCHAR* /*filename*/, ImpInterface* /*importerInt*/, Interface* /*ip*/, BOOL suppressPrompts)
+#include <maxscript/maxscript.h>
+#include <maxscript/util/listener.h>
+
+int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* importerInt, Interface* ip, BOOL suppressPrompts)
 {
 #pragma message(TODO("Implement the actual file import here and"))
 
-	if (!suppressPrompts)
-		DialogBoxParam(hInstance, MAKEINTRESOURCE(IDD_PANEL), GetActiveWindow(), ImportMDL_MAXOptionsDlgProc, (LPARAM)this);
+	
+	//read mdl
+	MDLReader model;
+	std::string filePath = BinaryUtils::wchar_to_string(std::wstring(fileName));
+
+	model.openFile( filePath.c_str() );
+
+	the_listener->edit_stream->printf(L"File: %s\n", fileName);
+	for (int i = 0; i < model.getModelCount(); i++) {
+		MdlSubObj mesh = model.subModels[i];
+		the_listener->edit_stream->printf(L"Mesh: %s\nVertices: %d\nTriangles: %d\n",
+			mesh.name.c_str(), mesh.verticeCount, mesh.faceCount);
+	}
+
+	return true;
 
 #pragma message(TODO("return TRUE If the file is imported properly"))
 
