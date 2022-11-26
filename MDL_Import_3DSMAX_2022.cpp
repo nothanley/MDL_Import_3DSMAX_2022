@@ -11,6 +11,7 @@
 //***************************************************************************/
 
 #include "MDL_Import_3DSMAX_2022.h"
+#include "MDLReader/MDLReader.h"
 
 #define ImportMDL_MAX_CLASS_ID Class_ID(0x2b8fbc0d, 0xad973e12)
 
