@@ -23,7 +23,6 @@ public:
     void BuildMesh(TimeValue t)
     {
         ivalid = FOREVER;
-        mesh.InvalidateGeomCache();
     }
 
     ////From Animatable

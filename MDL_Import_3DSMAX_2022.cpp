@@ -189,7 +189,7 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 		for (int j = 0; j < mesh.verticeCount; j++) {
 			Point3 vertPos;
 			vertPos.x = mesh.getVertices()[0 + (j * 3)];
-			vertPos.y = mesh.getVertices()[1+ (j * 3)];
+			vertPos.y = mesh.getVertices()[1 + (j * 3)];
 			vertPos.z = mesh.getVertices()[2 + (j * 3)];
 
 			modelMesh.setVert(j, vertPos);
@@ -198,11 +198,23 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 		for (int j = 0; j < mesh.faceCount; j++) {
 
 			modelMesh.faces[j].setVerts(
-				mesh.getTriFaces()[0 + (j * 3)],
 				mesh.getTriFaces()[1 + (j * 3)],
+				mesh.getTriFaces()[0 + (j * 3)],
 				mesh.getTriFaces()[2 + (j * 3)]);
 
 			modelMesh.faces[j].setEdgeVisFlags(1, 1, 0);
+		}
+		modelMesh.setSmoothFlags(1);
+		modelMesh.buildNormals();
+
+		//collectNorms
+		for (int j = 0; j < mesh.faceCount; j++) {
+			Point3 vertPos;
+			vertPos.x = mesh.getNormals()[0 + (j * 3)];
+			vertPos.y = mesh.getNormals()[1 + (j * 3)];
+			vertPos.z = mesh.getNormals()[2 + (j * 3)];
+
+			modelMesh.setNormal(j, vertPos);
 		}
 
 		modelMesh.InvalidateGeomCache();
