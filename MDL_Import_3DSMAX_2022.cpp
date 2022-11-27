@@ -153,8 +153,12 @@ void ImportMDL_MAX::ShowAbout(HWND /*hWnd*/)
 
 #include <maxscript/maxscript.h>
 #include <maxscript/util/listener.h>
+#include <codecvt>
+#include <mesh.h>
+#include "simpobj.h"
+#include "TriGeoObject.h"
 
-int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* importerInt, Interface* ip, BOOL suppressPrompts)
+int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/, Interface* ip, BOOL suppressPrompts)
 {
 #pragma message(TODO("Implement the actual file import here and"))
 
@@ -162,15 +166,56 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* importerInt, In
 	//read mdl
 	MDLReader model;
 	std::string filePath = BinaryUtils::wchar_to_string(std::wstring(fileName));
-
 	model.openFile( filePath.c_str() );
+
 
 	the_listener->edit_stream->printf(L"File: %s\n", fileName);
 	for (int i = 0; i < model.getModelCount(); i++) {
 		MdlSubObj mesh = model.subModels[i];
+		const wchar_t* meshName = BinaryUtils::string_to_wchar(mesh.name);
+
 		the_listener->edit_stream->printf(L"Mesh: %s\nVertices: %d\nTriangles: %d\n",
-			mesh.name.c_str(), mesh.verticeCount, mesh.faceCount);
+			meshName, mesh.verticeCount, mesh.faceCount);
+
+		//creates new obj from custom class and adds it as a node
+		TriGeoObject* obj = new TriGeoObject();
+		INode* node = ip->CreateObjectNode(obj);
+
+		Mesh modelMesh;
+		modelMesh.setNumVerts(mesh.verticeCount);
+		modelMesh.setNumFaces(mesh.faceCount);
+
+		//collectVerts
+		for (int j = 0; j < mesh.verticeCount; j++) {
+			Point3 vertPos;
+			vertPos.x = mesh.getVertices()[0 + (j * 3)];
+			vertPos.y = mesh.getVertices()[1+ (j * 3)];
+			vertPos.z = mesh.getVertices()[2 + (j * 3)];
+
+			modelMesh.setVert(j, vertPos);
+		}
+		//collectTris
+		for (int j = 0; j < mesh.faceCount; j++) {
+
+			modelMesh.faces[j].setVerts(
+				mesh.getTriFaces()[0 + (j * 3)],
+				mesh.getTriFaces()[1 + (j * 3)],
+				mesh.getTriFaces()[2 + (j * 3)]);
+
+			modelMesh.faces[j].setEdgeVisFlags(1, 1, 0);
+		}
+
+		modelMesh.InvalidateGeomCache();
+
+		obj->mesh = modelMesh;
+
+		//Builds the actual geometry and inits time and matrix;
+		node->SetName(meshName);
+		
+		
 	}
+
+	
 
 	return true;
 
