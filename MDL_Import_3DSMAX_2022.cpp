@@ -157,6 +157,8 @@ void ImportMDL_MAX::ShowAbout(HWND /*hWnd*/)
 #include <mesh.h>
 #include "simpobj.h"
 #include "TriGeoObject.h"
+#include "MNNormalSpec.h"
+#include "MeshNormalSpec.h"
 
 int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/, Interface* ip, BOOL suppressPrompts)
 {
@@ -179,7 +181,6 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 		//creates new obj from custom class and adds it as a node
 		TriGeoObject* obj = new TriGeoObject();
-		INode* node = ip->CreateObjectNode(obj);
 
 		Mesh modelMesh;
 		modelMesh.setNumVerts(mesh.verticeCount);
@@ -204,24 +205,52 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 			modelMesh.faces[j].setEdgeVisFlags(1, 1, 0);
 		}
-		modelMesh.setSmoothFlags(1);
-		modelMesh.buildNormals();
 
-		//collectNorms
-		for (int j = 0; j < mesh.faceCount; j++) {
-			Point3 vertPos;
-			vertPos.x = mesh.getNormals()[0 + (j * 3)];
-			vertPos.y = mesh.getNormals()[1 + (j * 3)];
-			vertPos.z = mesh.getNormals()[2 + (j * 3)];
+		// clear any normals data if existed
+		if (modelMesh.GetSpecifiedNormals()) modelMesh.ClearSpecifiedNormals();
 
-			modelMesh.setNormal(j, vertPos);
+		// create new and empty
+		modelMesh.SpecifyNormals();
+		MeshNormalSpec* nspec = modelMesh.GetSpecifiedNormals();
+		if (nspec)
+		{
+			// initialize the internal spec normals data
+			nspec->Initialize();
+
+			// allocate the face buffer
+			if (nspec->FAlloc( mesh.faceCount ))
+			{
+
+				Point3* norms = nspec->GetNormalArray();
+				//collectNorms
+				for (int j = 0; j < mesh.verticeCount; j++) {
+					Point3 vertPos;
+					vertPos.x = mesh.getNormals()[0 + (j * 3)];
+					vertPos.y = mesh.getNormals()[1 + (j * 3)];
+					vertPos.z = mesh.getNormals()[2 + (j * 3)];
+
+					//modelMesh.setNormal(j, vertPos);
+					norms[j] = (vertPos);
+				}
+
+
+				// build the normals
+				nspec->SetAllExplicit(true);
+				nspec->SetParent(&modelMesh);
+				nspec->CheckNormals();
+			}
+
+
 		}
 
-		modelMesh.InvalidateGeomCache();
 
+		modelMesh.InvalidateGeomCache();
+		TimeValue t(0);
+		obj->ConvertToType(t, EPOLYOBJ_CLASS_ID);
 		obj->mesh = modelMesh;
 
 		//Builds the actual geometry and inits time and matrix;
+		INode* node = ip->CreateObjectNode(obj);
 		node->SetName(meshName);
 		
 		
