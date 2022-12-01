@@ -37,7 +37,7 @@ public:
 	void setVertices(Mesh& mesh, MdlSubObj& model); //Sets mesh verts
 	void setTriangles(Mesh& mesh, MdlSubObj& model); //Sets mesh triangles
 	void setNormals(Mesh& mesh, MdlSubObj& model); //Sets mesh normals
-	void setMeshSkin(Mesh& mesh, MdlSubObj& model); //Sets mesh skin
+	void setMeshSkin(INode* node, MDLReader& model, MdlSubObj&mObj); //Sets mesh skin
 };
 
 
@@ -203,8 +203,6 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 		setTriangles(triMesh, mObj);
 		setNormals(triMesh, mObj);
 
-		if (mObj.isSkinned) { setMeshSkin(triMesh,mObj); }
-
 		//Viewport Update
 		triMesh.InvalidateGeomCache();
 
@@ -216,11 +214,11 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 		//Builds node and inits time and matrix;
 		INode* node = ip->CreateObjectNode(obj);
 		node->SetName(meshName);
-		
-		
+
+		//set Skin  - this is pretty slow, this could be optimized
+		if (mObj.isSkinned) { setMeshSkin(node,model,mObj); }
 	}
 
-	
 
 	return true;
 
@@ -229,10 +227,141 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 	return FALSE;
 }
 
+#include <iskin.h>
+#include "modstack.h"
+#include "triobj.h"
 
-void ImportMDL_MAX::setMeshSkin(Mesh&mesh , MdlSubObj& model) {
+// Locate a TriObject in an Object if it exists
+TriObject* GetTriObject(Object* o)
+{
+	if (o && o->CanConvertToType(triObjectClassID))
+		return (TriObject*)o->ConvertToType(0, triObjectClassID);
+	while (o->SuperClassID() == GEN_DERIVOB_CLASS_ID && o)
+	{
+		IDerivedObject* dobj = (IDerivedObject*)(o);
+		o = dobj->GetObjRef();
+		if (o && o->CanConvertToType(triObjectClassID))
+			return (TriObject*)o->ConvertToType(0, triObjectClassID);
+	}
+	return nullptr;
+}
+
+Modifier* GetSkin(INode* node)
+{
+	Object* pObj = node->GetObjectRef();
+	if (!pObj) return nullptr;
+	while (pObj->SuperClassID() == GEN_DERIVOB_CLASS_ID)
+	{
+		IDerivedObject* pDerObj = (IDerivedObject*)(pObj);
+		int Idx = 0;
+		while (Idx < pDerObj->NumModifiers())
+		{
+			// Get the modifier. 
+			Modifier* mod = pDerObj->GetModifier(Idx);
+			if (mod->ClassID() == SKIN_CLASSID)
+			{
+				// is this the correct Physique Modifier based on index?
+				return mod;
+			}
+			Idx++;
+		}
+		pObj = pDerObj->GetObjRef();
+	}
+	return nullptr;
+}
 
 
+// Get or Create the Skin Modifier
+Modifier* GetOrCreateSkin(INode* node)
+{
+	Modifier* skinMod = GetSkin(node);
+	if (skinMod)
+		return skinMod;
+
+	Object* pObj = node->GetObjectRef();
+	IDerivedObject* dobj = nullptr;
+	if (pObj->SuperClassID() == GEN_DERIVOB_CLASS_ID)
+		dobj = static_cast<IDerivedObject*>(pObj);
+	else {
+		dobj = CreateDerivedObject(pObj);
+	}
+	//create a skin modifier and add it
+	skinMod = (Modifier*)CreateInstance(OSM_CLASS_ID, SKIN_CLASSID);
+	dobj->SetAFlag(A_LOCK_TARGET);
+	dobj->AddModifier(skinMod);
+	dobj->ClearAFlag(A_LOCK_TARGET);
+	node->SetObjectRef(dobj);
+	return skinMod;
+}
+
+void ImportMDL_MAX::setMeshSkin( INode *node , MDLReader &model , MdlSubObj &mObj ) {
+
+	//create a skin modifier and add it
+	Modifier* skinMod = GetOrCreateSkin(node);
+	TriObject* triObject = GetTriObject(node->GetObjectRef());
+	Mesh& m = triObject->GetMesh();
+
+	if (ISkin* skin = (ISkin*)skinMod->GetInterface(I_SKIN)) {
+		ISkinImportData* iskinImport = (ISkinImportData*)skinMod->GetInterface(I_SKINIMPORTDATA);
+
+		// Set the num weights to 4.
+		int numBonesPerVertex = 4;
+		int numWeightsPerVertex = 4;
+
+		//v5+ dependency
+		IParamBlock2* params = skinMod->GetParamBlockByID(2/*advanced*/);
+		params->SetValue(numBonesPerVertex, 0, numWeightsPerVertex);
+
+		//v6+ dependency
+		BOOL ignore = TRUE;
+		params->SetValue(0xE/*ignoreBoneScale*/, 0, ignore);
+
+
+		// Create Bone List (Should only use affected)
+		Tab<INode*> bones;
+		for (size_t i = 0; i < mObj.weightedBones.size() ; ++i) {
+			
+			int wIndex = mObj.weightedBones[i];
+			MDLBoneOBJ bone = model.bones[wIndex];
+			
+			INode* boneRef = GetCOREInterface()->GetINodeByName(
+					BinaryUtils::string_to_wchar(bone.name)	);
+
+			bones.Append(1, &boneRef);
+			iskinImport->AddBoneEx(boneRef, TRUE);
+
+		}
+
+		ObjectState os = node->EvalWorldState(0);
+
+
+		//Assign Weights
+		std::vector<float> bi = mObj.blendIndices;
+		std::vector<float> bw = mObj.blendWeights;
+
+		for (size_t i = 0; i < mObj.verticeCount; ++i) {
+
+			Tab<INode*> wBones;
+			Tab<float> weights;
+
+			for (int j = 0; j < 4; j++) 
+			{
+				int boneIndex = bi[(i * 4) + j];
+				float boneWeight = bw[(i * 4) + j];
+				MDLBoneOBJ bone = model.bones[boneIndex];
+
+				INode* boneRef = GetCOREInterface()->GetINodeByName( BinaryUtils::string_to_wchar(bone.name) );
+				wBones.Append(1, &boneRef);
+				weights.Append(1, &boneWeight);
+			} 
+
+			BOOL add = iskinImport->AddWeights(node, i, wBones, weights);
+
+		}
+
+		node->EvalWorldState(0);
+
+	}
 
 }
 
@@ -293,8 +422,9 @@ void ImportMDL_MAX::importSkeleton( MDLReader& model ) {
 					INode *pNode = GetCOREInterface()->GetINodeByName(parName);
 					pNode->AttachChild(n, 1);
 				}
-
-				n->ShowBone(1);	}
+				n->SetWireColor(RGB(192, 192, 192));
+				n->ShowBone(1);	
+			}
 
 		}
 	}	
