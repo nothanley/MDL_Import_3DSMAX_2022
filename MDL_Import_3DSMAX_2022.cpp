@@ -13,9 +13,26 @@
 #include "MDL_Import_3DSMAX_2022.h"
 #include "MDLReader/MDLReader.h"
 #include "TriGeoObject.h"
+#include "MTLReader.h"
 
 
 #define ImportMDL_MAX_CLASS_ID Class_ID(0x2b8fbc0d, 0xad973e12)
+
+#include <maxtypes.h>
+#include <stdmat.h>
+#include <mtl.h>
+#include <maxscript/maxscript.h>
+#include <maxscript/util/listener.h>
+#include <codecvt>
+#include <mesh.h>
+#include "simpobj.h"
+#include "MNNormalSpec.h"
+#include "MeshNormalSpec.h"
+#include <iskin.h>
+#include "modstack.h"
+#include "triobj.h"
+#include <experimental/filesystem>
+#pragma once
 
 class ImportMDL_MAX : public SceneImport
 {
@@ -41,6 +58,8 @@ public:
 	void setNormals(Mesh& mesh, MdlSubObj& model); //Sets mesh normals
 	void setMeshSkin(INode* node, MDLReader& model, MdlSubObj&mObj); //Sets mesh skin
 	void setMaps(Mesh& mesh, MdlSubObj& model); //Sets mesh uvs
+	void setMaterial( MdlSubObj& model, INode*node, std::vector<StdMat2*>* sceneMaterials, std::vector<string>* sceneMatNames); //Sets mesh material
+	void setMatLib( std::string path , MTLReader& mdlMtls, std::vector<StdMat2*>* mats, std::vector<string>* matNames); //Sets mesh material
 };
 
 
@@ -93,20 +112,9 @@ INT_PTR CALLBACK ImportMDL_MAXOptionsDlgProc(HWND hWnd, UINT message, WPARAM, LP
 //--- ImportMDL_MAX -------------------------------------------------------
 
 
-#include <maxscript/maxscript.h>
-#include <maxscript/util/listener.h>
-#include <codecvt>
-#include <mesh.h>
-#include "simpobj.h"
-#include "MNNormalSpec.h"
-#include "MeshNormalSpec.h"
-#include <iskin.h>
-#include "modstack.h"
-#include "triobj.h"
-#pragma once
 
 #define BONE_FP_INTERFACE_ID Interface_ID(0x438aff72, 0xef9675ac)
-
+# define M_PI           3.14159265358979323846f  /* pi */
 
 ImportMDL_MAX::ImportMDL_MAX()
 {
@@ -191,7 +199,14 @@ std::string fpString( std::string filePath ) {
 	return file;
 }
 
-# define M_PI           3.14159265358979323846f  /* pi */
+std::string dirString(std::string filePath) {
+
+	std::size_t botDirPos = filePath.find_last_of("\\");
+	std::string dir = filePath.substr(0, botDirPos);
+
+	return dir;
+}
+
 
 int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/, Interface* ip, BOOL suppressPrompts)
 {
@@ -200,8 +215,17 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 	
 	//read mdl
 	MDLReader model;
+	MTLReader modelMtls;
 	std::string filePath = BinaryUtils::wchar_to_string(std::wstring(fileName));
 	model.openFile( filePath.c_str() );
+
+	//check mats
+	bool hasMats = false;
+	std::string matPath = BinaryUtils::ReplaceAll( BinaryUtils::str_tolower(filePath), std::string(".mdl") , std::string(".mtls") );
+	if (std::experimental::filesystem::exists(matPath)) {
+		modelMtls.openFile(matPath.c_str());
+		hasMats = true;
+	}
 
 	//debug print inputFile
 	wchar_t* fName = BinaryUtils::string_to_wchar(fpString(filePath));
@@ -214,6 +238,11 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 	//build-skeleton
 	if ( model.isSkinMesh() ) { importSkeleton(model, rootNode); }
+
+	//build material library
+	std::vector<StdMat2*>* sceneMaterials = new std::vector<StdMat2*>;
+	std::vector<string>* sceneMatNames = new std::vector<string>;
+	if (hasMats) { setMatLib( matPath , modelMtls , sceneMaterials, sceneMatNames);}
 
 	for (int i = 0; i < model.getModelCount(); i++) {
 
@@ -251,6 +280,11 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 		//set Skin  - this is pretty slow, this could be optimized
 		if (mObj.isSkinned) { setMeshSkin(node,model,mObj); }
+
+		//set Material
+		if (hasMats) { setMaterial( mObj, node, sceneMaterials, sceneMatNames); }
+		ip->RedrawViews(ip->GetTime());
+
 	}
 
 	//rotate root
@@ -266,6 +300,75 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 	return FALSE;
 }
+
+#include <bitmap.h>
+
+void ImportMDL_MAX::setMatLib( std::string filePath, MTLReader& mdlMtls 
+	, std::vector<StdMat2*>* mats , std::vector<string>* matNames ) {
+
+	//check tex path
+	std::string texPath = dirString(filePath) + "\\textures\\";
+
+	for (int i = 0; i < mdlMtls.materialCount; i++) {
+
+		MDLMaterial mat = mdlMtls.materials[i];
+		std::string colorMap = mat.diffuse;
+
+		//create default material
+		StdMat2 *m = NewDefaultStdMat();
+		m->SetName(BinaryUtils::string_to_wchar(mat.name));
+		m->SetMtlFlag(MTL_DISPLAY_ENABLE_FLAGS, TRUE);
+
+		//ambient mat
+		m->SetAmbient(Color(0.588f, 0.588f, 0.588f), 0);
+		m->SetDiffuse(Color(0.588f, 0.588f, 0.588f), 0);
+		m->SetSpecular(Color(0.902f, 0.902f, 0.902f), 0);
+
+		//getMTLsPath
+		std::string bmpPath = texPath + colorMap + ".dds";
+		std::string pngPath = texPath + colorMap + ".png";
+
+		//setDiffuseTex
+		if (std::experimental::filesystem::exists(bmpPath)){	//.dds
+			BitmapTex *bmp = NewDefaultBitmapTex();
+			bmp->SetMapName( BinaryUtils::string_to_wchar(bmpPath) );
+			m->SetSubTexmap(ID_DI, bmp);
+			mats->push_back(m); matNames->push_back(mat.name);
+		}
+		else {
+			if (std::experimental::filesystem::exists(pngPath)) { //.png
+				BitmapTex *bmp = NewDefaultBitmapTex();
+				bmp->SetMapName( BinaryUtils::string_to_wchar(pngPath) );
+				m->SetSubTexmap(ID_DI, bmp);
+				mats->push_back(m); matNames->push_back(mat.name);
+			}
+		}
+
+
+	}
+
+}
+
+void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node, 
+	std::vector<StdMat2*>* sceneMaterials, std::vector<string>* matNames ) {
+
+	std::string modelName = model.meshName;
+
+	//find mat
+	std::string modelID = BinaryUtils::ReplaceAll(BinaryUtils::str_tolower(modelName), std::string(":skinned"), std::string(""));
+	auto item = std::find(matNames->begin(), matNames->end(), modelID);
+
+	//add mat if exists
+	if (item != matNames->end()) {
+		int index = item - matNames->begin();
+
+		StdMat2* modelMat = sceneMaterials->at(index);
+		node->SetMtl(modelMat);
+	}
+	
+
+}
+
 
 
 void ImportMDL_MAX::setMaps(Mesh& mesh, MdlSubObj& mObj) {
