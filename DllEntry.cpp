@@ -12,6 +12,7 @@
 
 #include "MDL_Import_3DSMAX_2022.h"
 
+extern ClassDesc2* GetTriGeoObjectClassDesc();
 extern ClassDesc2* GetImportMDL_MAXDesc();
 
 HINSTANCE hInstance;
@@ -47,7 +48,7 @@ __declspec( dllexport ) const TCHAR* LibDescription()
 //TODO: Must change this number when adding a new class
 __declspec( dllexport ) int LibNumberClasses()
 {
-	return 1;
+	return 2;
 }
 
 // This function returns the number of plug-in classes this DLL
@@ -56,6 +57,7 @@ __declspec( dllexport ) ClassDesc* LibClassDesc(int i)
 	switch(i)
 	{
 		case 0: return GetImportMDL_MAXDesc();
+		case 1: return GetTriGeoObjectClassDesc();
 		default: return 0;
 	}
 }

@@ -12,6 +12,8 @@
 
 #include "MDL_Import_3DSMAX_2022.h"
 #include "MDLReader/MDLReader.h"
+#include "TriGeoObject.h"
+
 
 #define ImportMDL_MAX_CLASS_ID Class_ID(0x2b8fbc0d, 0xad973e12)
 
@@ -33,11 +35,12 @@ public:
 	unsigned int Version() override; // Version number * 100 (i.e. v3.01 = 301)
 	void ShowAbout(HWND hWnd) override; // Show DLL's "About..." box
 	int DoImport(const TCHAR* name, ImpInterface* i, Interface* gi, BOOL suppressPrompts = FALSE) override; // Import file
-	void importSkeleton(MDLReader& model); //Imports model skeleton
+	void importSkeleton(MDLReader& model, INode* rootNode); //Imports model skeleton
 	void setVertices(Mesh& mesh, MdlSubObj& model); //Sets mesh verts
 	void setTriangles(Mesh& mesh, MdlSubObj& model); //Sets mesh triangles
 	void setNormals(Mesh& mesh, MdlSubObj& model); //Sets mesh normals
 	void setMeshSkin(INode* node, MDLReader& model, MdlSubObj&mObj); //Sets mesh skin
+	void setMaps(Mesh& mesh, MdlSubObj& model); //Sets mesh uvs
 };
 
 
@@ -88,6 +91,23 @@ INT_PTR CALLBACK ImportMDL_MAXOptionsDlgProc(HWND hWnd, UINT message, WPARAM, LP
 
 
 //--- ImportMDL_MAX -------------------------------------------------------
+
+
+#include <maxscript/maxscript.h>
+#include <maxscript/util/listener.h>
+#include <codecvt>
+#include <mesh.h>
+#include "simpobj.h"
+#include "MNNormalSpec.h"
+#include "MeshNormalSpec.h"
+#include <iskin.h>
+#include "modstack.h"
+#include "triobj.h"
+#pragma once
+
+#define BONE_FP_INTERFACE_ID Interface_ID(0x438aff72, 0xef9675ac)
+
+
 ImportMDL_MAX::ImportMDL_MAX()
 {
 
@@ -157,16 +177,21 @@ void ImportMDL_MAX::ShowAbout(HWND /*hWnd*/)
 	// Optional
 }
 
-#include <maxscript/maxscript.h>
-#include <maxscript/util/listener.h>
-#include <codecvt>
-#include <mesh.h>
-#include "simpobj.h"
-#include "TriGeoObject.h"
-#include "MNNormalSpec.h"
-#include "MeshNormalSpec.h"
 
-#define BONE_FP_INTERFACE_ID Interface_ID(0x438aff72, 0xef9675ac)
+std::string fpString( std::string filePath ) {
+
+	std::size_t botDirPos = filePath.find_last_of("\\");
+	std::string file = filePath.substr(botDirPos, filePath.length());
+
+	file.erase(std::remove(file.begin(), file.end(), '\\'), file.end());
+
+	size_t lastindex = file.find_last_of(".");
+	file = file.substr(0, lastindex);
+
+	return file;
+}
+
+# define M_PI           3.14159265358979323846f  /* pi */
 
 int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/, Interface* ip, BOOL suppressPrompts)
 {
@@ -179,16 +204,22 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 	model.openFile( filePath.c_str() );
 
 	//debug print inputFile
+	wchar_t* fName = BinaryUtils::string_to_wchar(fpString(filePath));
 	the_listener->edit_stream->printf(L"File: %s\n", fileName);
 
-	//build-skeleton
-	if ( model.isSkinMesh() ) { importSkeleton(model); }
+	//build scene root
+	TriGeoObject* rootObj = new TriGeoObject();
+	INode* rootNode = ip->CreateObjectNode(rootObj);
+	rootNode->SetName(fName);
 
+	//build-skeleton
+	if ( model.isSkinMesh() ) { importSkeleton(model, rootNode); }
 
 	for (int i = 0; i < model.getModelCount(); i++) {
 
 		MdlSubObj mObj = model.subModels[i];
-		const wchar_t* meshName = BinaryUtils::string_to_wchar(mObj.name);
+		const wchar_t* modelName = BinaryUtils::string_to_wchar(mObj.name);
+		const wchar_t* meshName = BinaryUtils::string_to_wchar(mObj.meshName);
 
 		//debug print models
 		the_listener->edit_stream->printf(L"Mesh: %s\nVertices: %d\nTriangles: %d\n",
@@ -202,23 +233,32 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 		setVertices(triMesh, mObj);
 		setTriangles(triMesh, mObj);
 		setNormals(triMesh, mObj);
+		setMaps(triMesh, mObj);
 
 		//Viewport Update
 		triMesh.InvalidateGeomCache();
 
 		//adds mesh to obj
 		TimeValue t(0);
-		obj->ConvertToType(t, EPOLYOBJ_CLASS_ID);
 		obj->mesh = triMesh;
 
-		//Builds node and inits time and matrix;
+		//Builds object node and inits time and matrix;
 		INode* node = ip->CreateObjectNode(obj);
 		node->SetName(meshName);
+
+		//attach to root
+		rootNode->AttachChild(node,1);
 
 		//set Skin  - this is pretty slow, this could be optimized
 		if (mObj.isSkinned) { setMeshSkin(node,model,mObj); }
 	}
 
+	//rotate root
+	{
+		Matrix3 rot; rot.SetRotate(0, 0, 0); rot.SetScale(Point3(0, 0, 0));
+		rot.SetTranslate(Point3(0, 0, 0)); rot.SetRotateX(-90 * M_PI / 180);
+		rootNode->SetNodeTM(0, rot);
+	}
 
 	return true;
 
@@ -227,9 +267,54 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 	return FALSE;
 }
 
-#include <iskin.h>
-#include "modstack.h"
-#include "triobj.h"
+
+void ImportMDL_MAX::setMaps(Mesh& mesh, MdlSubObj& mObj) {
+
+	//sets map count
+	int n = mObj.verticeCount;
+	int f = mObj.faceCount;
+	std::vector<int> mtris = mObj.getTriFaces();
+
+	mesh.setNumMaps(mObj.uvCount+1, TRUE);
+	mesh.setNumTVerts(n);
+	mesh.setNumTVFaces(f);
+
+	//apply map texcoords 
+	for (int j = 1; j <= mObj.uvCount; j++) {
+
+		std::vector<float> modelUVs = mObj.getUVMap(j-1);
+
+		mesh.setMapSupport(j, TRUE);
+		mesh.setNumMapVerts(j, n, FALSE);
+		mesh.setNumMapFaces(j, f, FALSE);
+
+		//tverts
+		for (int i = 0; i < n; i++) {
+			float u = modelUVs[(i * 2)];
+			float v = modelUVs[(i * 2) + 1];
+			float w = 1.0f;
+
+			mesh.setMapVert(j, i, UVVert(u, -v+1.0f, w));
+		}
+
+		//tvface
+		for (int k = 0; k < f; k++) {
+
+			TVFace* mFaces = mesh.mapFaces(j);
+			TVFace* mFace = &mFaces[k];
+
+			mFace->setTVerts(
+				mtris[1 + (k * 3)],
+				mtris[0 + (k * 3)],
+				mtris[2 + (k * 3)]);
+
+		}
+
+	}
+
+}
+
+
 
 // Locate a TriObject in an Object if it exists
 TriObject* GetTriObject(Object* o)
@@ -366,7 +451,8 @@ void ImportMDL_MAX::setMeshSkin( INode *node , MDLReader &model , MdlSubObj &mOb
 }
 
 
-void ImportMDL_MAX::importSkeleton( MDLReader& model ) {
+
+void ImportMDL_MAX::importSkeleton( MDLReader& model , INode* rootNode ) {
 
 	FPInterface * fpBones = GetCOREInterface(BONE_FP_INTERFACE_ID);	//Load BoneSys Interface
 	FunctionID createBoneID = fpBones->FindFn(L"createBone");	//Looks for 'createBone' function. 
@@ -413,17 +499,19 @@ void ImportMDL_MAX::importSkeleton( MDLReader& model ) {
 			if (INode *n = result.n){
 				n->SetName( BinaryUtils::string_to_wchar(bone.name) );
 
-				float len = Length(startPos+.001f);
-				float width = .001;
-
 				if (bone.hasParent)
 				{
 					wchar_t* parName = BinaryUtils::string_to_wchar(bones[bone.parent].name);
 					INode *pNode = GetCOREInterface()->GetINodeByName(parName);
 					pNode->AttachChild(n, 1);
 				}
-				n->SetWireColor(RGB(192, 192, 192));
-				n->ShowBone(1);	
+				else {
+					rootNode->AttachChild(n, 1);
+				}
+
+				n->BoneAsLine(1);
+				n->SetWireColor(RGB(150, 150, 150));
+				n->ShowBone(2);	
 			}
 
 		}
@@ -471,7 +559,7 @@ void ImportMDL_MAX::setTriangles(Mesh& mesh, MdlSubObj& model) {
 
 void ImportMDL_MAX::setNormals(Mesh& mesh, MdlSubObj& model) {
 
-
+	int bufType = 3;
 	mesh.checkNormals(TRUE);
 
 	// clear any normals data if existed
@@ -487,14 +575,16 @@ void ImportMDL_MAX::setNormals(Mesh& mesh, MdlSubObj& model) {
 		nspec->SetNumFaces(model.faceCount);
 		nspec->SetNumNormals(model.verticeCount);
 
+		if ( model.normals.size() != model.getVertices().size() ) { bufType = 4; }	//RGBA-8 vs float-32 bit storage
+
 		//iterates over every norm
 		Point3* norms = nspec->GetNormalArray();
 		std::vector<float> mnorms = model.getNormals();
 		for (int j = 0; j < model.verticeCount; j++) {
 			Point3 vertPos;
-			vertPos.x = mnorms[0 + (j * 4)];
-			vertPos.y = mnorms[1 + (j * 4)];
-			vertPos.z = mnorms[2 + (j * 4)];
+			vertPos.x = mnorms[0 + (j * bufType)];
+			vertPos.y = mnorms[1 + (j * bufType)];
+			vertPos.z = mnorms[2 + (j * bufType)];
 
 			norms[j] = (vertPos);
 		}
