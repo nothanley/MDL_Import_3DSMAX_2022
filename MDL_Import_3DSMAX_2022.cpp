@@ -335,13 +335,14 @@ void ImportMDL_MAX::setMatLib( std::string filePath, MTLReader& mdlMtls
 			m->SetSubTexmap(ID_DI, bmp);
 			mats->push_back(m); matNames->push_back(mat.name);
 		}
+		else if (std::experimental::filesystem::exists(pngPath)) { //.png
+			BitmapTex* bmp = NewDefaultBitmapTex();
+			bmp->SetMapName(BinaryUtils::string_to_wchar(pngPath));
+			m->SetSubTexmap(ID_DI, bmp);
+			mats->push_back(m); matNames->push_back(mat.name);
+		}
 		else {
-			if (std::experimental::filesystem::exists(pngPath)) { //.png
-				BitmapTex *bmp = NewDefaultBitmapTex();
-				bmp->SetMapName( BinaryUtils::string_to_wchar(pngPath) );
-				m->SetSubTexmap(ID_DI, bmp);
-				mats->push_back(m); matNames->push_back(mat.name);
-			}
+			/* */
 		}
 
 
@@ -356,6 +357,7 @@ void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node,
 
 	//find mat
 	std::string modelID = BinaryUtils::ReplaceAll(BinaryUtils::str_tolower(modelName), std::string(":skinned"), std::string(""));
+	modelID = BinaryUtils::ReplaceAll(modelID, std::string("_ALPHA"), std::string(""));
 	auto item = std::find(matNames->begin(), matNames->end(), modelID);
 
 	//add mat if exists
@@ -364,6 +366,19 @@ void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node,
 
 		StdMat2* modelMat = sceneMaterials->at(index);
 		node->SetMtl(modelMat);
+	}
+	else {
+		//create default material
+		StdMat2* defaultMat = NewDefaultStdMat();
+		defaultMat->SetName(BinaryUtils::string_to_wchar(modelID));
+		defaultMat->SetMtlFlag(MTL_DISPLAY_ENABLE_FLAGS, TRUE);
+
+		//ambient mat
+		defaultMat->SetAmbient(Color(0.588f, 0.588f, 0.588f), 0);
+		defaultMat->SetDiffuse(Color(0.588f, 0.588f, 0.588f), 0);
+		defaultMat->SetSpecular(Color(0.902f, 0.902f, 0.902f), 0);
+
+		node->SetMtl(defaultMat);
 	}
 	
 
@@ -569,6 +584,7 @@ void ImportMDL_MAX::importSkeleton( MDLReader& model , INode* rootNode ) {
 	
 	//get model rig
 	std::vector<MDLBoneOBJ> bones = model.getArmature();
+	std::vector<INode*> boneNodes; /* Use a vector to avoid potential conflicts with existing bones. */
 
 	//Construct Rig
 	for (int i = 0; i < model.getBoneCount(); i++) {
@@ -601,11 +617,12 @@ void ImportMDL_MAX::importSkeleton( MDLReader& model , INode* rootNode ) {
 		if (status == FPS_OK && result.type == TYPE_INODE){
 			if (INode *n = result.n){
 				n->SetName( BinaryUtils::string_to_wchar(bone.name) );
+				boneNodes.push_back(n);
 
 				if (bone.hasParent)
 				{
-					wchar_t* parName = BinaryUtils::string_to_wchar(bones[bone.parent].name);
-					INode *pNode = GetCOREInterface()->GetINodeByName(parName);
+					int parIndex = bones[bone.parent].id;
+					INode *pNode = boneNodes[parIndex];
 					pNode->AttachChild(n, 1);
 				}
 				else {
