@@ -350,6 +350,8 @@ void ImportMDL_MAX::setMatLib( std::string filePath, MTLReader& mdlMtls
 
 }
 
+#include <shaders.h>
+
 void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node, 
 	std::vector<StdMat2*>* sceneMaterials, std::vector<string>* matNames ) {
 
@@ -365,6 +367,9 @@ void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node,
 		int index = item - matNames->begin();
 
 		StdMat2* modelMat = sceneMaterials->at(index);
+		modelMat->SetSpecular(Color(0.35f, 0.35f, 0.35f), 0);
+		modelMat->GetShader()->SetGlossiness(.31f,0);
+		modelMat->GetShader()->SetSpecularLevel(.46f, 0);
 		node->SetMtl(modelMat);
 	}
 	else {
@@ -376,7 +381,9 @@ void ImportMDL_MAX::setMaterial( MdlSubObj& model, INode*node,
 		//ambient mat
 		defaultMat->SetAmbient(Color(0.588f, 0.588f, 0.588f), 0);
 		defaultMat->SetDiffuse(Color(0.588f, 0.588f, 0.588f), 0);
-		defaultMat->SetSpecular(Color(0.902f, 0.902f, 0.902f), 0);
+		defaultMat->SetSpecular(Color(0.35f, 0.35f, 0.35f), 0);
+		defaultMat->GetShader()->SetGlossiness(.31f, 0);
+		defaultMat->GetShader()->SetSpecularLevel(.46f, 0);
 
 		node->SetMtl(defaultMat);
 	}
