@@ -13,7 +13,7 @@ class TriGeoObject : public SimpleObject2
 {
 public:
 
-    TriGeoObject(){ }
+    TriGeoObject() { }
 
     // Member variable
     double objSize;

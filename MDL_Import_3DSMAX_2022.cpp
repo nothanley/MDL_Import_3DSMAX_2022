@@ -210,9 +210,6 @@ std::string dirString(std::string filePath) {
 
 int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/, Interface* ip, BOOL suppressPrompts)
 {
-#pragma message(TODO("Implement the actual file import here and"))
-
-	
 	//read mdl
 	MDLReader model;
 	MTLReader modelMtls;
@@ -296,9 +293,6 @@ int ImportMDL_MAX::DoImport(const TCHAR* fileName, ImpInterface* /*importerInt*/
 
 	return true;
 
-#pragma message(TODO("return TRUE If the file is imported properly"))
-
-	return FALSE;
 }
 
 #include <bitmap.h>
@@ -515,8 +509,8 @@ void ImportMDL_MAX::setMeshSkin( INode *node , MDLReader &model , MdlSubObj &mOb
 		ISkinImportData* iskinImport = (ISkinImportData*)skinMod->GetInterface(I_SKINIMPORTDATA);
 
 		// Set the num weights to 4.
-		int numBonesPerVertex = 4;
-		int numWeightsPerVertex = 4;
+		int numBonesPerVertex = mObj.skinInfluence;
+		int numWeightsPerVertex = mObj.skinInfluence;
 
 		//v5+ dependency
 		IParamBlock2* params = skinMod->GetParamBlockByID(2/*advanced*/);
@@ -554,13 +548,15 @@ void ImportMDL_MAX::setMeshSkin( INode *node , MDLReader &model , MdlSubObj &mOb
 			Tab<INode*> wBones;
 			Tab<float> weights;
 
-			for (int j = 0; j < 4; j++) 
+			for (int j = 0; j < mObj.skinInfluence; j++)
 			{
-				int boneIndex = bi[(i * 4) + j];
-				float boneWeight = bw[(i * 4) + j];
+				int boneIndex = bi[(i * mObj.skinInfluence) + j];
+				float boneWeight = bw[(i * mObj.skinInfluence) + j];
+				
+				std::string boneName = model.stringTable[boneIndex];
 				MDLBoneOBJ bone = model.bones[boneIndex];
 
-				INode* boneRef = GetCOREInterface()->GetINodeByName( BinaryUtils::string_to_wchar(bone.name) );
+				INode* boneRef = GetCOREInterface()->GetINodeByName(BinaryUtils::string_to_wchar(boneName));
 				wBones.Append(1, &boneRef);
 				weights.Append(1, &boneWeight);
 			} 
@@ -650,8 +646,8 @@ void ImportMDL_MAX::importSkeleton( MDLReader& model , INode* rootNode ) {
 
 void ImportMDL_MAX::setVertices(Mesh& mesh, MdlSubObj& model) {
 
-	mesh.setNumVerts(model.verticeCount);
 	std::vector<float> mverts = model.getVertices();
+	mesh.setNumVerts(model.verticeCount);
 
 	//collectVerts
 	for (int j = 0; j < model.verticeCount; j++) {
@@ -667,8 +663,8 @@ void ImportMDL_MAX::setVertices(Mesh& mesh, MdlSubObj& model) {
 
 void ImportMDL_MAX::setTriangles(Mesh& mesh, MdlSubObj& model) {
 
-	mesh.setNumFaces(model.faceCount);
 	std::vector<int> mtris = model.getTriFaces();
+	mesh.setNumFaces(model.faceCount);
 
 	//collectTris
 	for (int j = 0; j < model.faceCount; j++) {
